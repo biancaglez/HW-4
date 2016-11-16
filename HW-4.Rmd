@@ -1,6 +1,6 @@
 ---
 title: "MATH 216 Homework 4"
-author: "WRITE YOUR NAME HERE"
+author: "Bianca Gonzalez"
 output:
   html_document:
     toc: true
@@ -10,12 +10,20 @@ output:
 ---
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4.5}
-# Suggested packages; feel free to use more!
+library(mapproj)
+library(rgeos)
+library(knitr)
 library(tidyverse)
 library(USAboundaries)
 library(maptools)
 library(sp)
 library(broom)
+library(ggplot2)
+library(leaflet)
+library(rgdal)
+library(plotly)
+library(RColorBrewer)
+
 ```
 
 
@@ -25,11 +33,14 @@ library(broom)
 Please indicate
 
 * Who you collaborated with:
+Brenda for mapping the distance part. 
 * Roughly how much time you spent on this HW so far:
+likely five hours. maybe more. 
 * The URL of the RPubs published URL [here](https://www.nhl.com/).
 * What gave you the most trouble:
+Making my maps interactive. Following online advice often leads to nowhere
 * Any comments you have:
-
+n/a
 
 
 ## Question 1:
@@ -41,29 +52,145 @@ shipping hub in the United States. Where should they build it?
 the color corresponds to the distance of the given area to the shipping hub,
 which is marked on the map with a large red dot.
 
+Here plotting a choropleth map of the lower 48 states where the color corresponds
+to the distance of the given area to the shipping hub, marked on the map with a large red dot.
+
 ```{r, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4.5}
-# Perform your computations here:
+counties_shp <- us_counties()
+counties_data <- counties_shp@data
+counties_polygon <- tidy(counties_shp, region="geoid")
 
-```
+counties <- left_join(counties_polygon, counties_data, by=c("id"="geoid"))
+counties <- counties %>%
+  filter( !state_name %in% c("Alaska", "Hawaii", "Puerto Rico"))
+
+sj_lng=-121.88 
+sj_lat=37.33
+
+counties_chloro<-counties %>% 
+  mutate(
+    distance = sqrt((sj_lng-long)^2 + (sj_lat -lat)^2))
 
 
-```{r, eval=FALSE, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4.5}
-# Here is a template of a ggplot call; feel free to change this to suit your
-# needs. Once your computations above are complete, set the eval=TRUE on the
-# line above to tell R Markdown to run this code block.
-ggplot(data=geo_data, aes(x=long, y=lat, group=group, fill=distance)) +
+title <- paste("Distance from Center to Rest of Country")
+
+ggplot(counties_chloro, aes(x=long, y=lat, group=group, fill= distance)) +
+  geom_polygon() + 
+  ggtitle(title) 
+
+
+ggplot(data=counties_chloro, aes(x=long, y=lat, group=group, fill=distance)) +
   # Plot choropleth polygons, low -> high being colored white -> dark green
   geom_polygon() +
-  scale_fill_gradient(low="white", high="darkgreen") + 
+  scale_fill_gradient(low="yellow", high="red") + 
   # Trace outlines of areas
   geom_path(size=0.1) +
   # Mark hub
-  annotate("point", x=hub_x_coord, y=hub_y_coord, col="red", size=5) +
+  annotate("point", x=sj_lng, y=sj_lat, col="red", size=5) +
   # Correct aspect ratio for map
-  coord_map()
+  coord_map() +
+  ggtitle(title)
+
+
+
+```
+
+My location is just outside of Cupertino near San Jose, California. This place is far enough from San Francisco and Cupertino so there are affordable land options, there is martime access to ports, and this location can serve the tech hubs of surrounding urban areas, particularly Cupertino and San Francisco. 
+```{r, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4.5}
+#load leaflet map of San Jose industries: 
+San_Jose_content <- paste(
+  "<b><a href='http://statisticalatlas.com/place/California/San-Jose/Industries '>San Jose Industries Statistics</a></b>",
+  sep = "<br/>"
+)
+San_Jose_content
+
+leaflet() %>% 
+  addTiles() %>%
+  addPopups(lng=-121.88, lat=37.33, San_Jose_content, options = popupOptions(closeButton = FALSE))
 ```
 
 
+Examine location at a local level based on population and industry variables: 
+We will examine places in San Jose, California that are currently in viable locations depending on their current zoning status like: 
 
+1)Transit Employment District, 2) Industrial Park District, 3)Combined Industrial/Commercial, 4) Light Industrial District, 5) Heavy Industrial District
+
+Block group information obtained from http://www.sanjoseca.gov/index.aspx?NID=3308 ,
+at the bottom of the page, in the zoning section, there is a data download button to download this county data.
+
+The Legend has to be tweaked.
+
+```{r, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4.5}
+
+#load data
+SJ <- rgdal::readOGR("ZONING_201607291505515388/ZONING.shp", layer = "ZONING") 
+#class(SJ)
+#spatial polygons dataframe
+
+#chaning the coordinate system in my data used this site and imported the prj file to convert prj to a common name system: http://prj2epsg.org/search
+
+proj4string(SJ) <-CRS("+init=epsg:2227")
+prj.LatLong <- CRS("+proj=longlat +ellps=WGS84 +datum=WGS84")
+SJ.geo <- spTransform(SJ, prj.LatLong)
+#check to see if there are lat long coordinates now. YAY! YES YES YES!
+SJ.geo@proj4string
+
+
+#view the attributes and choose: https://www.municode.com/library/ca/san_jose/codes/code_of_ordinances?nodeId=TIT20ZO_CH20.10GEPRZODI
+SJ.geo@data <- SJ.geo@data %>% 
+  filter(ZONING %in% c("TEC", "IP", "CIC", "LI", "HI"))
+
+qpal <- colorQuantile("RdYlBu", SJ.geo$ZONING_ID, n = 6)
+
+plotSJ <- leaflet(SJ.geo) %>%
+  addTiles() %>% 
+  addPolylines(color="black", weight=.8) %>% 
+  addPolygons(color = ~qpal(SJ.geo$ZONING_ID)) %>% 
+  addLegend("bottomright", pal = qpal, values = ~SJ.geo$ZONING_ID,
+    title = "Viable Locations by Zoning Code",
+    labFormat = labelFormat(prefix = ""),
+    opacity = 1)
+plotSJ
+
+#tried to apply ggplotly to this, but it takes an object of class ggplot 
+#and not an object of class leaflet, so cannot make it interactive with this function.
+
+```
+
+In this map the attempt is to make the map interactive, so when we hover over a certain zoning code we can see that zoning code ID. I will continue working on the plotly version to try to publish an interactive map of zoning codes. 
+```{r, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4.5}
+
+SJ_data <- SJ.geo@data 
+SJ_polygon <- gBuffer(SJ.geo, byid=TRUE, width=0)
+SJ_polygons <- tidy(SJ_polygon, region = "ZONING_ID") # types do not match, convert chr to num. 
+SJ_polygons$id <- SJ_polygons$id %>% 
+as.numeric(id)
+#dataframe type
+SJ_all <- full_join(SJ_polygons, SJ_data, by=c("id"="ZONING_ID"))
+
+#trying to figure out how to plot this according to code... come back to later
+#SJ_all$ZONING <- with(SJ_all, paste(ifelse(ZONING == "IP", "IP", "other")))
+#trying to only plot IP first
+
+Geo_loc <- list(
+  scope = 'usa',
+  projection = list(type = 'albers usa'),
+  showlakes = TRUE,
+  lakecolor = toRGB('white')
+)
+
+tiger <- plot_geo(SJ_all, locationmode = 'USA-counties') %>%
+  add_trace(text = ~ZONING,
+    color = ~id, colors = 'Purples') %>%
+  colorbar(title = "ZONING Codes") %>%
+  layout(title = 'Zoning Codes)',
+    geo = Geo_loc)
+tiger
+
+#https://cpsievert.github.io/plotly_book/maps.html
+#http://www.milanor.net/blog/maps-in-r-plotting-data-points-on-a-map/ 
+#https://pakillo.github.io/R-GIS-tutorial/ 
+#https://images.plot.ly/plotly-documentation/images/r_cheat_sheet.pdf
+```
 
 
